@@ -1,0 +1,27 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "VisitoAI Notification System",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apz2000/VisitoAI.git"
+  },
+  "author": "Alberto Penhos",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/apz2000/VisitoAI/issues"
+  },
+  "homepage": "https://github.com/apz2000/VisitoAI#readme",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "nodemon": "^3.1.7",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {},
+  "keywords": []
+}
