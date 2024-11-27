@@ -10,7 +10,6 @@ const socket = io.connect("http://localhost:4000", {
 
 function App() {
   const [message, setMessage] = useState("");
-  const [messageReceived] = useState("");
   const [notifications, setNotifications] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState("");
 
