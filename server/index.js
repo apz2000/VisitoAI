@@ -4,7 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const rabbitMQ = require('./rabbitmq');
-const connectDB = require('./config/db');
+const { connectDB, closeDB } = require('./config/db');
 const Notification = require('./models/Notification');
 const User = require('./models/User');
 require('dotenv').config();
@@ -17,53 +17,93 @@ app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "http://localhost:3000", methods: ["GET", "POST"] },
+    cors: { origin: "http://localhost:3000", methods: ["GET", "POST", "PATCH"] },
 });
 
-// Initialize RabbitMQ connection
+// Define separate queues for different concerns
+const QUEUE_NAMES = {
+    DB_OPERATIONS: 'notifications_db',
+    REALTIME_NOTIFICATIONS: 'notifications_realtime'
+};
+
+// Connect and set up consumers
 rabbitMQ.connect().then(() => {
-    rabbitMQ.consumeFromQueue('notifications', async (message) => {
+    // Consumer for database operations
+    rabbitMQ.consumeFromQueue(QUEUE_NAMES.DB_OPERATIONS, async (message) => {
         try {
+            // TODO: add logic to handle different channels
+            // TODO: avoid dependency on mongoose models and send real-time notifications directly
             const notification = new Notification(message);
-            await notification.save();
+            const savedNotification = await notification.save();
+            // console.log('Notification saved to DB:', notification._id);
             
-            // Convert to plain object and ensure IDs are strings
-            const plainNotification = {
+            // After saving, publish to realtime queue
+            /* Update to use tempId instead of _id for real-time notifications
+            await rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, {
                 ...notification.toObject(),
                 _id: notification._id.toString(),
                 userId: notification.userId.toString()
-            };
-            
-            console.log('About to emit notification:', plainNotification);
-            io.to(plainNotification.userId).emit('new_notification', plainNotification);
-            console.log('Notification emitted');
+            }, false);*/
+
+            await rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, {
+                ...savedNotification.toObject(),
+                _id: savedNotification._id.toString(),
+                userId: savedNotification.userId.toString(),
+                tempId: message.tempId.toString()
+            }, false);
         } catch (error) {
-            console.error('Error processing notification:', error);
+            console.error('Error saving notification to DB:', error);
         }
     });
+
+    // Consumer for real-time notifications
+    rabbitMQ.consumeFromQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, async (message) => {
+        try {
+            io.to(message.userId).emit(message._id ? 'notification_updated' : 'new_notification', message);
+        } catch (error) {
+            console.error('Error emitting notification:', error);
+        }
+    }, false);
 });
 
 io.on("connection", (socket) => {
-    console.log(`User connected: ${socket.id}`);
+    // console.log(`User connected: ${socket.id}`);
     
     // Add handler for joining user-specific room
     socket.on("join_user_room", (userId) => {
-        console.log(`Socket ${socket.id} joining room for user: ${userId}`);
+        // console.log(`Socket ${socket.id} joining room for user: ${userId}`);
         socket.join(userId);
-        console.log('Current rooms for socket:', Array.from(socket.rooms));
     });
 
-    socket.on("leave_user_room", (userId) => {
-        console.log(`Socket ${socket.id} leaving room for user ${userId}`);
-        socket.leave(userId);
+    // Handle initial notifications request through socket
+    socket.on("get_initial_notifications", async ({ userId, channel }) => {
+        try {
+            const notifications = await Notification.find({ 
+                userId: userId,
+                channel: channel || 'web'
+            })
+                .sort({ timestamp: -1 })
+                .lean(); // Get plain objects
+
+            // Convert ObjectIds to strings
+            const sanitizedNotifications = notifications.map(notification => ({
+                ...notification,
+                _id: notification._id.toString(),
+                userId: notification.userId.toString()
+            }));
+
+            socket.emit("initial_notifications", sanitizedNotifications);
+        } catch (error) {
+            console.error('Error fetching initial notifications:', error);
+        }
     });
 
     // Handle mark as read events
-    socket.on("mark_notification_read", async ({ notificationId }) => {
+    socket.on("notification_change_status", async ({ notificationId, status }) => {
         try {
             const notification = await Notification.findByIdAndUpdate(
                 notificationId,
-                { status: 'read' },
+                { status: status },
                 { new: true }
             );
             if (notification) {
@@ -78,6 +118,30 @@ io.on("connection", (socket) => {
             console.error('Error marking notification as read:', error);
         }
     });
+
+    // Handle notification creation
+    socket.on("send_notification", async ({ message, userId, status, title }) => {
+        // TODO: add logic to send notification to selected user
+        try {
+            const notificationData = {
+                userId: userId,
+                title: title || 'Notification',
+                message: message,
+                status: status || 'unread',
+                timestamp: new Date(),
+                channel: 'web',
+                tempId: Date.now() // temporary ID for real-time notifications
+            };
+            
+            // Publish to DB operations queue
+            await Promise.all([
+                rabbitMQ.publishToQueue(QUEUE_NAMES.DB_OPERATIONS, notificationData),
+                rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, notificationData, false)
+            ]);
+        } catch (error) {
+            console.error('Failed to queue notification:', error);
+        }
+    }); 
 });
 
 // User endpoints
@@ -136,10 +200,12 @@ app.patch("/api/users/:id", async (req, res) => {
 });
 
 // API endpoints
-app.get("/api/notifications/:userId", async (req, res) => {
+app.get("/api/notifications/user/:userId/channel/:channel", async (req, res) => {
+    // add logic depending channel, for the moment, only web is supported
     try {
         const notifications = await Notification.find({ 
-            userId: req.params.userId 
+            userId: req.params.userId,
+            channel: req.params.channel || 'web' 
         }).sort({ timestamp: -1 });
         res.json({ notifications });
     } catch (error) {
@@ -148,20 +214,27 @@ app.get("/api/notifications/:userId", async (req, res) => {
 });
 
 app.post("/api/notification", async (req, res) => {
+    // add logic depending channel, for the moment, only web is supported
     try {
-        const notification = new Notification(req.body);
-        await notification.save();
+        const notificationData = {
+            userId: req.body.userId,
+            title: req.body.title || 'Notification',
+            message: req.body.message,
+            status: req.body.status || 'unread',
+            timestamp: new Date(),
+            channel: req.body.channel || 'web',
+            tempId: Date.now() // temporary ID for real-time notifications
+        };
         
-        // Send to RabbitMQ queue
-        await rabbitMQ.publishToQueue('notifications', {
-            userId: notification.userId,
-            message: notification.message,
-            status: notification.status,
-            timestamp: notification.timestamp,
-        });
+        // Publish to DB operations queue
+        await Promise.all([
+            rabbitMQ.publishToQueue(QUEUE_NAMES.DB_OPERATIONS, notificationData),
+            rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, notificationData, false)
+        ]);
         
-        res.status(201).json(notification);
+        res.status(202).json({ message: 'Notification queued successfully' });
     } catch (error) {
+        console.error('Failed to queue notification:', error);
         res.status(500).json({ error: 'Failed to create notification' });
     }
 });
@@ -183,3 +256,16 @@ server.listen(4000, () => {
     console.log("Server running on port 4000");
 });
 
+process.on('SIGINT', async () => {
+    console.log('Server shutting down');
+    try {
+        await rabbitMQ.channel.close();
+        await server.close();
+        await closeDB();
+        await io.close();
+        process.exit(0);
+    } catch (error) {
+        console.error('Error shutting down server:', error);
+        process.exit(1);
+    }
+});

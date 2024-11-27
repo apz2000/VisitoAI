@@ -1,6 +1,6 @@
 const amqp = require('amqplib');
 
-class RabbitMQClient {
+class RabbitMQService {
     constructor() {
         this.connection = null;
         this.channel = null;
@@ -8,43 +8,47 @@ class RabbitMQClient {
 
     async connect() {
         try {
-            this.connection = await amqp.connect('amqp://localhost');
+            this.connection = await amqp.connect(process.env.RABBITMQ_URL);
             this.channel = await this.connection.createChannel();
             console.log('Connected to RabbitMQ');
         } catch (error) {
-            console.error('Error connecting to RabbitMQ:', error);
+            console.error('RabbitMQ connection error:', error);
+            throw error;
         }
     }
 
-    async publishToQueue(queue, message) {
+    async publishToQueue(queueName, data, isDurable = true) {
         try {
-            if (!this.channel) {
-                await this.connect();
-            }
-            await this.channel.assertQueue(queue, { durable: true });
-            this.channel.sendToQueue(queue, Buffer.from(JSON.stringify(message)));
-            console.log(`Message sent to queue ${queue}`);
+            await this.channel.assertQueue(queueName, { durable: isDurable });
+            return this.channel.sendToQueue(
+                queueName, 
+                Buffer.from(JSON.stringify(data)),
+                { persistent: true }
+            );
         } catch (error) {
-            console.error('Error publishing to queue:', error);
+            console.error(`Error publishing to queue ${queueName}:`, error);
+            throw error;
         }
     }
 
-    async consumeFromQueue(queue, callback) {
+    async consumeFromQueue(queueName, callback, isDurable = true) {
         try {
-            if (!this.channel) {
-                await this.connect();
-            }
-            await this.channel.assertQueue(queue, { durable: true });
-            this.channel.consume(queue, (message) => {
-                const content = JSON.parse(message.content.toString());
-                callback(content);
-                this.channel.ack(message);
+            await this.channel.assertQueue(queueName, { durable: isDurable });
+            console.log(`Waiting for messages in ${queueName}`);
+            
+            this.channel.consume(queueName, (msg) => {
+                if (msg !== null) {
+                    const data = JSON.parse(msg.content.toString());
+                    callback(data);
+                    this.channel.ack(msg);
+                }
             });
-            console.log(`Consuming from queue ${queue}`);
         } catch (error) {
-            console.error('Error consuming from queue:', error);
+            console.error(`Error consuming from queue ${queueName}:`, error);
+            this.channel.nack(msg);
+            throw error;
         }
     }
 }
 
-module.exports = new RabbitMQClient(); 
+module.exports = new RabbitMQService(); 

@@ -1,7 +1,6 @@
 import "./App.css";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import io from "socket.io-client";
-import axios from 'axios';
 import UserSelect from './components/UserSelect';
 
 const socket = io.connect("http://localhost:4000", {
@@ -11,16 +10,16 @@ const socket = io.connect("http://localhost:4000", {
 
 function App() {
   const [message, setMessage] = useState("");
-  const [messageReceived, setMessageReceived] = useState("");
+  const [messageReceived] = useState("");
   const [notifications, setNotifications] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState("");
 
   // 1. First, verify socket connection
   useEffect(() => {
-    console.log('Setting up socket connection');
+    // console.log('Setting up socket connection');
     
     socket.on('connect', () => {
-      console.log('Socket connected!', socket.id);
+      // console.log('Socket connected!', socket.id);
     });
 
     socket.on('connect_error', (error) => {
@@ -28,33 +27,50 @@ function App() {
     });
 
     // 2. Set up notification listeners AFTER connection
-    console.log('Setting up notification listeners');
+    // console.log('Setting up notification listeners');
     
     socket.on("new_notification", (notification) => {
-      console.log('🔔 Received real-time notification:', notification);
+      // console.log('Received real-time notification:', notification);
+      const id = notification.tempId || notification._id;
       setNotifications(prev => {
-        const exists = prev.some(n => n._id === notification._id);
+        const exists = prev.some(n => n._id === id);
         if (exists) {
-          console.log('Notification already exists, skipping');
+          // console.log('Notification already exists, skipping');
           return prev;
         }
-        console.log('Adding new notification to list');
+        notification._id = id;
+        // console.log('Adding new notification to list', notification);
         return [notification, ...prev];
       });
     });
 
     socket.on("notification_updated", (updatedNotification) => {
-      console.log('🔄 Received notification update:', updatedNotification);
+      const tempId = updatedNotification.tempId;
+      const dbId = updatedNotification._id;
+      // console.log('Notification Update Received:', {
+      //   tempId,
+      //   dbId,
+      //   fullUpdate: updatedNotification
+      // });
+      
       setNotifications(prev => 
-        prev.map(notif => 
-          notif._id === updatedNotification._id ? updatedNotification : notif
-        )
+        prev.map(notif => {
+          if (notif._id.toString() === tempId?.toString() || notif._id === dbId) {
+            const finalId = dbId || notif._id;
+            return {
+              ...notif,
+              ...updatedNotification,
+              _id: finalId // Ensure _id is updated to the correct value
+            };
+          }
+          return notif;
+        })
       );
     });
 
     // Cleanup all listeners
     return () => {
-      console.log('Cleaning up socket listeners');
+      // console.log('Cleaning up socket listeners');
       socket.off('connect');
       socket.off('connect_error');
       socket.off("new_notification");
@@ -62,68 +78,77 @@ function App() {
     };
   }, []); // Empty dependency array - run once on mount
 
-  // 3. Handle room management separately
+  // 3. Handle room management separately and populate notifications for selected user
   useEffect(() => {
     if (selectedUserId) {
-      console.log(`Attempting to join room for user: ${selectedUserId}`);
+      // console.log(`Attempting to join room for user: ${selectedUserId}`);
       socket.emit("join_user_room", selectedUserId);
-      fetchNotifications();
+      
+      // Request initial notifications through socket
+      socket.emit("get_initial_notifications", { userId: selectedUserId, channel: 'web' });
     }
 
     return () => {
       if (selectedUserId) {
-        console.log(`Leaving room for user: ${selectedUserId}`);
+        // console.log(`Leaving room for user: ${selectedUserId}`);
         socket.emit("leave_user_room", selectedUserId);
       }
     };
   }, [selectedUserId]);
 
-  const fetchNotifications = async () => {
-    try {
-      const response = await axios.get(`http://localhost:4000/api/notifications/${selectedUserId}`);
-      setNotifications(response.data.notifications);
-    } catch (error) {
-      console.error('Failed to fetch notifications:', error);
-    }
-  };
+  // Socket listeners for selected user in both initial load and real-time updates
+  useEffect(() => {
+    // console.log('Setting up notification listeners');
+    
+    // Handle initial notifications load
+    socket.on("initial_notifications", (notifications) => {
+      // console.log('Received initial notifications:', notifications);
+      setNotifications(notifications);
+    });
 
-  const sendMessage = () => {
-    if (!selectedUserId) {
-      alert('Please select a user first');
-      return;
-    }
-    socket.emit("send_message", { message, userId: selectedUserId });
-    setMessage("");
-  };
+    // Handle real-time updates
+    /*socket.on("new_notification", (notification) => {
+      // console.log('Received real-time notification:', notification);
+      setNotifications(prev => {
+        const exists = prev.some(n => n._id === notification._id);
+        if (exists) return prev;
+        return [notification, ...prev];
+      });
+    });*/
 
+    return () => {
+      socket.off("initial_notifications");
+      socket.off("new_notification");
+    };
+  }, []);
+
+  // Send notification to selected user over HTTP instead of socket for testing purposes. They should only be sent via REST API.
   const sendNotification = async () => {
     if (!selectedUserId) {
       alert('Please select a user first');
       return;
     }
     try {
-      const response = await axios.post('http://localhost:4000/api/notification', {
+      /* const response = await axios.post('http://localhost:4000/api/notification', {
         message,
         userId: selectedUserId,
         status: 'unread'
-      });
+      }); */
+      
+      socket.emit("send_notification", { message, userId: selectedUserId, status: 'unread' });
       setMessage('');
     } catch (error) {
       console.error('Failed to send notification:', error);
     }
   };
 
-  const markAsRead = async (notificationId) => {
+  const markAsReadOrUnread = async (notification) => {
     try {
+      const status = notification.status === 'read' ? 'unread' : 'read';
       // Emit socket event for real-time update
-      socket.emit("mark_notification_read", { notificationId });
-      
-      await axios.patch(`http://localhost:4000/api/notification/${notificationId}`, {
-        status: 'read'
-      });
-      
+      socket.emit("notification_change_status", { notificationId: notification._id, status });
       setNotifications(prev => 
-        prev.map(n => n._id === notificationId ? {...n, status: 'read'} : n)
+        prev.map(n => n._id === notification._id ? {...n, status} : n)
       );
     } catch (error) {
       console.error('Failed to update notification:', error);
@@ -145,20 +170,12 @@ function App() {
               placeholder="Type your message..."
               onChange={(e) => setMessage(e.target.value)}
               className="message-input"
-              onKeyPress={(e) => e.key === 'Enter' && sendNotification()}
+              onKeyDown={(e) => e.key === 'Enter' && sendNotification()}
             />
             <div className="button-group">
-              <button onClick={sendMessage} className="btn primary">Send Message</button>
-              <button onClick={sendNotification} className="btn secondary">Send Notification</button>
+              <button onClick={sendNotification} className="btn primary">Send Notification</button>
             </div>
           </div>
-          
-          {messageReceived && (
-            <div className="received-message">
-              <h3>Received Message:</h3>
-              <p>{messageReceived}</p>
-            </div>
-          )}
         </div>
 
         <div className="notifications-section">
@@ -168,8 +185,9 @@ function App() {
               <div 
                 key={notification._id} 
                 className={`notification-card ${notification.status}`}
-                onClick={() => notification.status === 'unread' && markAsRead(notification._id)}
+                onClick={() => markAsReadOrUnread(notification)}
               >
+                <h3 className="notification-title">{notification.title}</h3>
                 <p className="notification-message">{notification.message}</p>
                 <div className="notification-meta">
                   <span className="notification-time">

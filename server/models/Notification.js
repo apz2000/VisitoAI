@@ -7,6 +7,10 @@ const notificationSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    title: {
+        type: String,
+        required: true
+    },
     message: {
         type: String,
         required: true
@@ -19,6 +23,11 @@ const notificationSchema = new mongoose.Schema({
     timestamp: {
         type: Date,
         default: Date.now
+    },
+    channel: {
+        type: String,
+        enum: ['email', 'push', 'sms','web','all'],
+        default: 'web'
     }
 });
 
