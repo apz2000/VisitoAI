@@ -1,4 +1,4 @@
-**FS Engineer Objectivo![ref1]**
+**FS Engineer Objectivo!**
 
 Desarrollar un sistema simplificado de notificaciones en tiempo real para una tienda ficticia de comercio electrónico. El objetivo es informar a los usuarios sobre eventos relevantes, como el estado de sus pedidos. A continuación, se detalla lo que se espera implementar en cada componente:
 
@@ -37,8 +37,6 @@ Desarrollar un sistema simplificado de notificaciones en tiempo real para una ti
 
 - Permitir a los usuarios marcar una notificación como leída desde la interfaz.
 - Esta acción debe enviar una actualización al backend para reflejar el cambio de estado de la notificación.
-
-![ref1]
 
 **Notas**
 
