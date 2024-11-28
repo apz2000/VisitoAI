@@ -3,10 +3,11 @@ const app = express();
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
-const rabbitMQ = require('./rabbitmq');
+const rabbitMQ = require('./services/rabbitmq');
 const { connectDB, closeDB } = require('./config/db');
 const Notification = require('./models/Notification');
-const User = require('./models/User');
+const userRoutes = require('./routes/userRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 require('dotenv').config();
 
 // Connect to MongoDB
@@ -14,7 +15,8 @@ connectDB();
 
 app.use(cors());
 app.use(express.json());
-
+app.use('/api/users', userRoutes);
+app.use('/api/notifications', notificationRoutes);
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "http://localhost:3000", methods: ["GET", "POST", "PATCH"] },
@@ -26,6 +28,7 @@ const QUEUE_NAMES = {
     REALTIME_NOTIFICATIONS: 'notifications_realtime'
 };
 
+// TODO: Create Consumers for RabbitMQ
 // Connect and set up consumers
 rabbitMQ.connect().then(() => {
     // Consumer for database operations
@@ -142,61 +145,6 @@ io.on("connection", (socket) => {
             console.error('Failed to queue notification:', error);
         }
     }); 
-});
-
-// User endpoints
-app.post("/api/users", async (req, res) => {
-    try {
-        const user = new User(req.body);
-        await user.save();
-        res.status(201).json(user);
-    } catch (error) {
-        if (error.code === 11000) { // Duplicate key error
-            res.status(400).json({ error: 'Email already exists' });
-        } else {
-            res.status(500).json({ error: 'Failed to create user' });
-        }
-    }
-});
-
-app.get("/api/users", async (req, res) => {
-    try {
-        const users = await User.find({ isActive: true })
-            .select('-__v')
-            .sort({ createdAt: -1 });
-        res.json(users);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch users' });
-    }
-});
-
-app.get("/api/users/:id", async (req, res) => {
-    try {
-        const user = await User.findById(req.params.id).select('-__v');
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        res.json(user);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch user' });
-    }
-});
-
-app.patch("/api/users/:id", async (req, res) => {
-    try {
-        const user = await User.findByIdAndUpdate(
-            req.params.id,
-            { $set: req.body },
-            { new: true, runValidators: true }
-        ).select('-__v');
-        
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        res.json(user);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to update user' });
-    }
 });
 
 // API endpoints

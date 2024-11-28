@@ -2,7 +2,9 @@ import "./App.css";
 import { useEffect, useState } from "react";
 import io from "socket.io-client";
 import UserSelect from './components/UserSelect';
+// TODO: create notifications component
 
+// TODO: fix socket connection when server restarts
 const socket = io.connect("http://localhost:4000", {
     transports: ['websocket'],
     debug: true
@@ -55,11 +57,9 @@ function App() {
       setNotifications(prev => 
         prev.map(notif => {
           if (notif._id.toString() === tempId?.toString() || notif._id === dbId) {
-            const finalId = dbId || notif._id;
             return {
               ...notif,
               ...updatedNotification,
-              _id: finalId // Ensure _id is updated to the correct value
             };
           }
           return notif;
@@ -176,7 +176,7 @@ function App() {
             </div>
           </div>
         </div>
-
+        {/* TODO: create notifications component */}
         <div className="notifications-section">
           <h2>Notifications</h2>
           <div className="notifications-list">
