@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Notification = require("../models/Notification");
-const rabbitMQ = require("../services/rabbitMQ");
+const rabbitMQ = require("../services/rabbitmq");
 // Define separate queues for different concerns
 const QUEUE_NAMES = {
     DB_OPERATIONS: 'notifications_db',

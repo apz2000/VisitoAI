@@ -40,14 +40,7 @@ rabbitMQ.connect().then(() => {
             const savedNotification = await notification.save();
             // console.log('Notification saved to DB:', notification._id);
             
-            // After saving, publish to realtime queue
-            /* Update to use tempId instead of _id for real-time notifications
-            await rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, {
-                ...notification.toObject(),
-                _id: notification._id.toString(),
-                userId: notification.userId.toString()
-            }, false);*/
-
+            // After saving, publish to realtime queue with DB id.
             await rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, {
                 ...savedNotification.toObject(),
                 _id: savedNotification._id.toString(),
@@ -145,59 +138,6 @@ io.on("connection", (socket) => {
             console.error('Failed to queue notification:', error);
         }
     }); 
-});
-
-// API endpoints
-app.get("/api/notifications/user/:userId/channel/:channel", async (req, res) => {
-    // add logic depending channel, for the moment, only web is supported
-    try {
-        const notifications = await Notification.find({ 
-            userId: req.params.userId,
-            channel: req.params.channel || 'web' 
-        }).sort({ timestamp: -1 });
-        res.json({ notifications });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch notifications' });
-    }
-});
-
-app.post("/api/notification", async (req, res) => {
-    // add logic depending channel, for the moment, only web is supported
-    try {
-        const notificationData = {
-            userId: req.body.userId,
-            title: req.body.title || 'Notification',
-            message: req.body.message,
-            status: req.body.status || 'unread',
-            timestamp: new Date(),
-            channel: req.body.channel || 'web',
-            tempId: Date.now() // temporary ID for real-time notifications
-        };
-        
-        // Publish to DB operations queue
-        await Promise.all([
-            rabbitMQ.publishToQueue(QUEUE_NAMES.DB_OPERATIONS, notificationData),
-            rabbitMQ.publishToQueue(QUEUE_NAMES.REALTIME_NOTIFICATIONS, notificationData, false)
-        ]);
-        
-        res.status(202).json({ message: 'Notification queued successfully' });
-    } catch (error) {
-        console.error('Failed to queue notification:', error);
-        res.status(500).json({ error: 'Failed to create notification' });
-    }
-});
-
-app.patch("/api/notification/:id", async (req, res) => {
-    try {
-        const notification = await Notification.findByIdAndUpdate(
-            req.params.id,
-            { status: req.body.status },
-            { new: true }
-        );
-        res.json(notification);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to update notification' });
-    }
 });
 
 server.listen(4000, () => {
